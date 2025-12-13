@@ -136,6 +136,8 @@ def check_availability(article):
                             status = "❌ Нет в наличии"
                         elif status_attr == "size-back-soon":
                             status = "⏳ Скоро появится"
+                        elif status_attr == "size-low-on-stock":
+                            status = "📉 Осталось мало"
                         else:
                             status = f"❔ {status_attr}"
 
