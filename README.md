@@ -13,3 +13,10 @@ https://sites.google.com/chromium.org/driver/
 Укажите путь к chromedriver.exe в скрипте:
 
 CHROMEDRIVER_PATH = r"C:\chromedriver\chromedriver.exe"
+
+## 2. Для поиска по складам
+
+pip install playwright
+playwright install
+
+Драйвер не нужен
