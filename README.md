@@ -17,6 +17,7 @@ CHROMEDRIVER_PATH = r"C:\chromedriver\chromedriver.exe"
 ## 2. Для поиска по складам
 
 pip install playwright
+
 playwright install
 
 Драйвер не нужен
