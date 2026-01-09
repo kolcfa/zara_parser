@@ -1,186 +1,301 @@
-import tkinter as tk
-from tkinter import messagebox
+import random
+import re
+import time
+
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import time
-import random
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.keys import Keys
 
-# ----------------- Настройки Chrome -----------------
+# ----------------- Настройки -----------------
 CHROMEDRIVER_PATH = r"C:\chromedriver\chromedriver.exe"
-chrome_options = Options()
-chrome_options.add_argument("--headless")  # Без окна браузера, можно убрать для теста
-chrome_options.add_argument("--disable-gpu")
-chrome_options.add_argument("--no-sandbox")
-chrome_options.add_argument("--log-level=3")
-chrome_options.add_argument("--blink-settings=imagesEnabled=false")
-chrome_options.add_argument("--disable-extensions")
-chrome_options.add_argument("--disable-plugins")
-chrome_options.add_argument(
-    "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/143.0.7499.42 Safari/537.36"
-)
 
-# ----------------- Создание драйвера -----------------
-driver = webdriver.Chrome(service=Service(CHROMEDRIVER_PATH), options=chrome_options)
+COUNTRIES = [
+    "kz", "pt", "us", "fr", "it", "de", "es", "cn", "hk", "jp",
+    "tr", "bg", "lt", "hu", "ee", "uk", "pl", "fi", "ae", "il"
+]
 
-# ----------------- Список стран -----------------
-COUNTRIES = ["kz", "pt", "us", "fr", "it", "de", "es", "cn", "hk", "jp", "tr", "bg", "lt", "hu", "ee", "uk", "pl", "fi", "ae", "il"]
+UNAVAILABLE_KEYWORDS = ["notify me", "coming soon", "out of stock"]
 
-# ----------------- Функция проверки -----------------
-def check_availability_gui():
-    product_type = type_var.get()
-    if product_type not in ("0", "1"):
-        messagebox.showerror("Ошибка", "Выберите тип товара (0 или 1)")
-        return
 
-    article_number = entry_article.get().strip()
-    if not article_number.isdigit() or len(article_number) != 7:
-        messagebox.showerror("Ошибка", "Артикул должен состоять из 7 цифр")
-        return
+def build_driver(headless: bool) -> webdriver.Chrome:
+    chrome_options = Options()
+    if headless:
+        chrome_options.add_argument("--headless=new")
 
-    article = product_type + article_number  # Формируем полный артикул
-    selected_indices = listbox_countries.curselection()
-    if not selected_indices:
-        messagebox.showerror("Ошибка", "Выберите хотя бы одну страну")
-        return
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--log-level=3")
+    chrome_options.add_argument("--blink-settings=imagesEnabled=false")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-plugins")
+    chrome_options.add_argument(
+        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/143.0.7499.42 Safari/537.36"
+    )
 
-    selected_countries = [COUNTRIES[i] for i in selected_indices]
-    unavailable_keywords = ["notify me", "coming soon", "out of stock"]
+    return webdriver.Chrome(service=Service(CHROMEDRIVER_PATH), options=chrome_options)
 
-    text_output.delete(1.0, tk.END)
 
-    for country in selected_countries:
+def ask_product_type() -> str:
+    while True:
+        t = input("Введите тип товара (0 - верхняя одежда или 1 - обувь и аксессуары): ").strip()
+        if t in ("0", "1"):
+            return t
+        print("Ошибка: тип должен быть 0 или 1.")
+
+
+def ask_article_number() -> str:
+    while True:
+        a = input("Введите 7-значный артикул (только цифры): ").strip()
+        if re.fullmatch(r"\d{7}", a):
+            return a
+        print("Ошибка: артикул должен состоять ровно из 7 цифр.")
+
+
+def ask_countries() -> list[str]:
+    print("\nДоступные страны:")
+    print(", ".join(COUNTRIES))
+    s = input("Введите страны через запятую (например: kz,us,fr) или Enter = все: ").strip().lower()
+
+    if not s:
+        return COUNTRIES[:]
+
+    parts = [c.strip() for c in s.split(",") if c.strip()]
+    unknown = [c for c in parts if c not in COUNTRIES]
+    if unknown:
+        print(f"Неизвестные страны: {', '.join(unknown)}")
+        print("Повторите ввод.")
+        return ask_countries()
+
+    seen = set()
+    out = []
+    for c in parts:
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def ask_headless() -> bool:
+    while True:
+        s = input("Запускать headless? (Y/n): ").strip().lower()
+        if s in ("", "y", "yes", "да", "д"):
+            return True
+        if s in ("n", "no", "нет", "н"):
+            return False
+        print("Введите Y или N (или просто Enter).")
+
+
+def try_close_overlays(driver: webdriver.Chrome):
+    # OneTrust / cookies accept
+    try:
+        driver.execute_script("""
+            const b = document.querySelector('#onetrust-accept-btn-handler');
+            if (b) b.click();
+        """)
+    except Exception:
+        pass
+
+    # ESC иногда закрывает модалки
+    try:
+        driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+    except Exception:
+        pass
+
+
+def get_button_texts_js(driver: webdriver.Chrome) -> list[str]:
+    return driver.execute_script("""
+        return Array.from(document.querySelectorAll('button'))
+            .map(b => (b.innerText || '').replace(/\\n/g,' ').trim())
+            .filter(t => t.length > 0);
+    """)
+
+
+def wait_for_sizes_any(driver: webdriver.Chrome, timeout: int = 18):
+    """
+    Ждём любые варианты рендера размеров:
+    1 li.size-selector-sizes__size (старый/частый вариант)
+    2 кнопки размеров по data-qa-action^="size-" (часто в CN/новых раскладках)
+    """
+    WebDriverWait(driver, timeout).until(
+        lambda d: d.execute_script("""
+            const a = document.querySelectorAll('li.size-selector-sizes__size').length;
+            const b = document.querySelectorAll('button[data-qa-action^="size-"]').length;
+            const c = document.querySelectorAll('[data-qa-action^="size-"]').length;
+            return (a > 0) || (b > 0) || (c > 0);
+        """)
+    )
+
+
+def get_sizes_js(driver: webdriver.Chrome) -> list[tuple[str, str]]:
+    """
+    Универсальный снимок размеров:
+    - сначала пробуем стандартные li.size-selector-sizes__size
+    - если их нет, берём кнопки с data-qa-action^="size-" и читаем текст
+    """
+    data = driver.execute_script("""
+        // 1 основной вариант
+        let items = Array.from(document.querySelectorAll('li.size-selector-sizes__size'));
+        if (items.length) {
+            return items.map(li => {
+                const label =
+                    li.querySelector('.size-selector-sizes-size__label')?.innerText?.trim()
+                    || (li.innerText || '').trim().split('\\n')[0].trim()
+                    || '';
+                const btn = li.querySelector('button');
+                const status = btn?.getAttribute('data-qa-action') || '';
+                return [label, status];
+            });
+        }
+
+        // 2 fallback: любые size-кнопки по data-qa-action
+        const btns = Array.from(document.querySelectorAll('button[data-qa-action^="size-"], [data-qa-action^="size-"]'))
+            .filter(el => el.tagName.toLowerCase() === 'button' || el.getAttribute('role') === 'button');
+
+        return btns.map(b => {
+            const status = b.getAttribute('data-qa-action') || '';
+            const label = (b.innerText || '').replace(/\\n/g,' ').trim();
+            return [label, status];
+        });
+    """)
+
+    return [(a, b) for a, b in data]
+
+
+def click_add(driver: webdriver.Chrome) -> bool:
+    try:
+        add_button = WebDriverWait(driver, 12).until(
+            EC.element_to_be_clickable(
+                (By.XPATH, "//button[.//span[normalize-space()='Add'] or normalize-space()='Add']")
+            )
+        )
+        driver.execute_script("arguments[0].click();", add_button)
+        return True
+    except TimeoutException:
+        return False
+    except Exception:
+        return False
+
+
+def check_availability(driver: webdriver.Chrome, product_type: str, article_number: str, countries: list[str]):
+    article = product_type + article_number
+
+    for country in countries:
         url = f"https://www.zara.com/{country}/en/-p{article}.html"
-        text_output.insert(tk.END, f"\n🌐 Проверка: {country.upper()}\nURL: {url}\n")
 
+        print("\n" + "=" * 70)
+        print(f"Проверка: {country.upper()}")
+        print(f"URL: {url}")
+
+        # 1 Открыть страницу
         try:
             driver.get(url)
-            text_output.insert(tk.END, "✅ Страница загружена\n")
-        except:
-            text_output.insert(tk.END, "❌ Ошибка загрузки URL\n")
+            WebDriverWait(driver, 18).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            print("Страница загружена")
+        except Exception as e:
+            print(f"Ошибка загрузки URL: {e}")
             continue
 
-        time.sleep(random.uniform(1, 2))
+        time.sleep(random.uniform(1.0, 2.0))
+        try_close_overlays(driver)
 
-        # Проверка доступности товара
+        # 2 Проверка доступности по кнопкам (устойчиво)
         try:
-            buttons = driver.find_elements(By.TAG_NAME, "button")
-            found_unavailable = None
-
-            for btn in buttons:
-                text = btn.text.replace("\n", " ").strip()
-                if any(k in text.lower() for k in unavailable_keywords):
-                    found_unavailable = text
-                    break
+            button_texts = get_button_texts_js(driver)
+            found_unavailable = next(
+                (t for t in button_texts if any(k in t.lower() for k in UNAVAILABLE_KEYWORDS)),
+                None
+            )
 
             if found_unavailable:
-                text_output.insert(tk.END, f"❌ Недоступно — {found_unavailable}\n")
+                print(f"❌ Недоступно — {found_unavailable}")
                 continue
 
-            text_output.insert(tk.END, "🛒 Товар доступен!\n")
-
-        except:
-            text_output.insert(tk.END, "❌ Ошибка анализа кнопок\n")
+            print("Явных 'notify me/coming soon/out of stock' не найдено")
+        except Exception as e:
+            print(f"❌ Ошибка анализа кнопок: {e}")
             continue
 
-        # ------------------ Поиск кнопки ADD ------------------
-        try:
-            add_button = WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located(
-                    (By.XPATH, "//button[.//span[.='Add'] or normalize-space()='Add']")
-                )
-            )
-            text_output.insert(tk.END, "🔘 Найдена кнопка ADD\n")
-            driver.execute_script("arguments[0].click();", add_button)
-            time.sleep(1.5)
-        except Exception as e:
-            text_output.insert(tk.END, f"❌ Кнопка ADD не найдена: {e}\n")
+        # 3 ADD
+        add_clicked = click_add(driver)
+        if add_clicked:
+            print("Кнопка ADD найдена и нажата")
+            time.sleep(random.uniform(1.0, 1.8))
+        else:
+            print("⚠ Кнопка ADD не найдена/не кликабельна")
 
-        # ------------------ Список размеров ------------------
-        try:
-            size_items = driver.find_elements(By.CSS_SELECTOR, "li.size-selector-sizes__size")
-            if not size_items:
-                text_output.insert(tk.END, "⚠ Размеры не найдены\n")
-            else:
-                text_output.insert(tk.END, "\n📏 Список размеров:\n")
-                for item in size_items:
-                    try:
-                        size = item.find_element(By.CSS_SELECTOR, ".size-selector-sizes-size__label").text.strip()
-                        button = item.find_element(By.CSS_SELECTOR, "button")
-                        status_attr = button.get_attribute("data-qa-action")
+        # 4 Размеры (CN иногда требует чуть больше ожидания и/или повторный клик ADD)
+        got_sizes = False
+        for attempt in range(2):
+            try:
+                wait_for_sizes_any(driver, timeout=22 if country in ("cn", "hk") else 16)
+                size_data = get_sizes_js(driver)
 
-                        if status_attr == "size-in-stock":
-                            status = "✅ В наличии"
-                        elif status_attr == "size-out-of-stock":
-                            status = "❌ Нет в наличии"
-                        elif status_attr == "size-back-soon":
-                            status = "⏳ Скоро появится"
-                        elif status_attr == "size-low-on-stock":
-                            status = "📉 Осталось мало"
-                        else:
-                            status = f"❔ {status_attr}"
+                if not size_data:
+                    raise TimeoutException("size_data empty")
 
-                        text_output.insert(tk.END, f"— Размер {size}: {status}\n")
+                print("📏 Список размеров:")
+                for size, status_attr in size_data:
+                    status_attr = (status_attr or "").strip()
 
-                    except Exception as e:
-                        text_output.insert(tk.END, f"Ошибка чтения размера: {e}\n")
+                    if status_attr == "size-in-stock":
+                        status = "✅ В наличии"
+                    elif status_attr == "size-out-of-stock":
+                        status = "❌ Нет в наличии"
+                    elif status_attr == "size-back-soon":
+                        status = "⏳ Скоро появится"
+                    elif status_attr == "size-low-on-stock":
+                        status = "📉 Осталось мало"
+                    else:
+                        status = f"❔ {status_attr or 'unknown'}"
 
-        except Exception as e:
-            text_output.insert(tk.END, f"❌ Ошибка получения размеров: {e}\n")
+                    print(f"— Размер {size or '?'}: {status}")
+
+                got_sizes = True
+                break
+
+            except TimeoutException:
+                if attempt == 0:
+                    # повторный клик — часто помогает на CN
+                    print("↻ Размеры не появились, пробую повторный клик ADD...")
+                    try_close_overlays(driver)
+                    _ = click_add(driver)
+                    time.sleep(random.uniform(1.0, 2.0))
+                else:
+                    if add_clicked:
+                        print("⚠ Размеры не появились (timeout) после клика ADD")
+                    else:
+                        print("⚠ Размеры не появились (timeout)")
+            except Exception as e:
+                print(f"❌ Ошибка получения размеров: {e}")
+                break
+
+        if not got_sizes:
+            # иногда Zara рисует размеры внутри другого контейнера,
+            # но хотя бы дадим подсказку, что парсер не увидел их в DOM
+            pass
 
 
-# ----------------- Выбрать / снять все страны -----------------
-def toggle_select_all():
-    current_selection = listbox_countries.curselection()
-    if len(current_selection) == len(COUNTRIES):
-        listbox_countries.selection_clear(0, tk.END)
-    else:
-        listbox_countries.selection_set(0, tk.END)
+def main():
+    print("Zara Availability Checker (console)\n")
+
+    product_type = ask_product_type()
+    article_number = ask_article_number()
+    countries = ask_countries()
+    headless = ask_headless()
+
+    driver = build_driver(headless=headless)
+    try:
+        check_availability(driver, product_type, article_number, countries)
+    finally:
+        driver.quit()
+        print("\nГотово. Драйвер закрыт.")
 
 
-# ----------------- GUI -----------------
-window = tk.Tk()
-window.title("Zara Availability Checker")
-window.geometry("600x600")
-
-# Выбор типа товара
-tk.Label(window, text="Выберите тип товара").pack(pady=5)
-type_var = tk.StringVar(value="0")
-frame_type = tk.Frame(window)
-frame_type.pack()
-tk.Radiobutton(frame_type, text="0 — верхняя одежда", variable=type_var, value="0").pack(side=tk.LEFT, padx=5)
-tk.Radiobutton(frame_type, text="1 — обувь и аксессуары", variable=type_var, value="1").pack(side=tk.LEFT, padx=5)
-
-# Ввод артикула
-tk.Label(window, text="Введите 7-значный артикул").pack(pady=5)
-entry_article = tk.Entry(window, width=20)
-entry_article.pack()
-
-# Выбор стран
-tk.Label(window, text="Выберите страны").pack(pady=5)
-frame_list = tk.Frame(window)
-frame_list.pack()
-listbox_countries = tk.Listbox(frame_list, selectmode=tk.MULTIPLE, height=10)
-for c in COUNTRIES:
-    listbox_countries.insert(tk.END, c)
-listbox_countries.pack(side=tk.LEFT)
-scrollbar = tk.Scrollbar(frame_list, orient=tk.VERTICAL)
-scrollbar.config(command=listbox_countries.yview)
-listbox_countries.config(yscrollcommand=scrollbar.set)
-scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-btn_select_all = tk.Button(window, text="Выбрать / Снять все", command=toggle_select_all)
-btn_select_all.pack(pady=5)
-
-btn_check = tk.Button(window, text="Проверить наличие", command=check_availability_gui)
-btn_check.pack(pady=10)
-
-text_output = tk.Text(window, height=20, wrap=tk.WORD)
-text_output.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
-
-window.mainloop()
-driver.quit()
+if __name__ == "__main__":
+    main()
