@@ -1,4 +1,4 @@
-# zara_parser (Stable)
+# parser.py (Stable)
 
 ## Установка Python-библиотек
 Скрипт использует Selenium. Установите его командой:
@@ -14,7 +14,7 @@ https://sites.google.com/chromium.org/driver/
 
 CHROMEDRIVER_PATH = r"C:\chromedriver\chromedriver.exe"
 
-# zara_stock (Unstable)
+# parser_stock.py (Unstable)
 
 ## Для поиска по складам
 
