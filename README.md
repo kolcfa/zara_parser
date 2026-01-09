@@ -14,7 +14,9 @@ https://sites.google.com/chromium.org/driver/
 
 CHROMEDRIVER_PATH = r"C:\chromedriver\chromedriver.exe"
 
-## 2. Для поиска по складам (Unstable)
+# zara_parser_stock (Unstable)
+
+## 1. Для поиска по складам
 
 pip install playwright
 
