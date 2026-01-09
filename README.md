@@ -1,4 +1,4 @@
-# zara_parser
+# zara_parser (Stable)
 
 ## 1. Установка Python-библиотек
 Скрипт использует Selenium. Установите его командой:
@@ -14,7 +14,7 @@ https://sites.google.com/chromium.org/driver/
 
 CHROMEDRIVER_PATH = r"C:\chromedriver\chromedriver.exe"
 
-## 2. Для поиска по складам
+## 2. Для поиска по складам (Unstable)
 
 pip install playwright
 
